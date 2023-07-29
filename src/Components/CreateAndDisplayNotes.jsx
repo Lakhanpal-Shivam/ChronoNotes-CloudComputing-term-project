@@ -23,6 +23,12 @@ import NotesEditing from "../Components/NotesEditing ";
 import axios from "axios";
 import { InfoOutlineIcon } from "@chakra-ui/icons";
 import { Tooltip } from "@chakra-ui/react";
+import {
+  REACT_APP_API_GETDATA,
+  REACT_APP_API_PUTDATA,
+  REACT_APP_API_SNS,
+  REACT_APP_API_TEXT,
+} from "../util/URLs";
 
 function CreateAndDisplayNotes() {
   const [notes, setNotes] = useState([]);
@@ -67,9 +73,7 @@ function CreateAndDisplayNotes() {
   const handleSubscription = async () => {
     // First, fetch all the notes
     try {
-      const response = await axios.get(
-        "https://aep40x3ihl.execute-api.us-east-1.amazonaws.com/prod/"
-      );
+      const response = await axios.get(REACT_APP_API_GETDATA);
       if (response.status === 200) {
         // If the request is successful, find the note by id
         const allNotes = response.data;
@@ -80,20 +84,17 @@ function CreateAndDisplayNotes() {
         if (noteWithArn) {
           console.log(noteWithArn.topicArn);
           try {
-            const subscribeResponse = await axios.post(
-              "https://szs5bn2441.execute-api.us-east-1.amazonaws.com/prod/",
-              {
-                topicArn: noteWithArn.topicArn, // Use the arn from the fetched note
-                message: selectedNote.text,
-                subject: selectedNote.title,
-                isSubscribe: true,
-                email: email,
-              }
-            );
+            const subscribeResponse = await axios.post(REACT_APP_API_SNS, {
+              topicArn: noteWithArn.topicArn,
+              message: selectedNote.text,
+              subject: selectedNote.title,
+              isSubscribe: true,
+              email: email,
+            });
             if (subscribeResponse.status === 200) {
               // If the subscription is successful, add the note to the list of subscribed notes
               setSubscribedNotes([...subscribedNotes, selectedNote]);
-              setEmail(""); // clear the email field
+              setEmail("");
               onSubscribeModalClose();
             }
           } catch (error) {
@@ -126,13 +127,6 @@ function CreateAndDisplayNotes() {
     onClose: onViewNoteClose,
   } = useDisclosure();
 
-  // const toggleSubscription = (note) => {
-  //   if (subscribedNotes.includes(note)) {
-  //     setSubscribedNotes(subscribedNotes.filter((n) => n !== note));
-  //   } else {
-  //     setSubscribedNotes([...subscribedNotes, note]);
-  //   }
-  // };
   const addNote = async () => {
     if (noteText.trim() !== "" && noteHeading.trim() !== "") {
       const newNote = {
@@ -142,10 +136,7 @@ function CreateAndDisplayNotes() {
         isEditing: false,
       };
       try {
-        const response = await axios.post(
-          "https://qqaeoe85z8.execute-api.us-east-1.amazonaws.com/prod/",
-          newNote
-        );
+        const response = await axios.post(REACT_APP_API_PUTDATA, newNote);
         if (response.status === 200) {
           setNoteText("");
           setNoteHeading("");
@@ -167,10 +158,9 @@ function CreateAndDisplayNotes() {
         const base64String = reader.result
           .replace("data:", "")
           .replace(/^.+,/, "");
-        const response = await axios.post(
-          "https://8rvgg3e3m0.execute-api.us-east-1.amazonaws.com/prod/",
-          { image: base64String }
-        );
+        const response = await axios.post(REACT_APP_API_TEXT, {
+          image: base64String,
+        });
         if (response.data) {
           console.log("Data" + response.data);
           const newNote = {
@@ -202,9 +192,7 @@ function CreateAndDisplayNotes() {
 
   const fetchNotes = async () => {
     try {
-      const response = await axios.get(
-        "https://aep40x3ihl.execute-api.us-east-1.amazonaws.com/prod/"
-      );
+      const response = await axios.get(REACT_APP_API_GETDATA);
       if (response.status === 200) {
         //console.log(response.data);
         setNotes(response.data);

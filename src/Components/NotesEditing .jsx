@@ -11,19 +11,23 @@ import {
   Button,
 } from "@chakra-ui/react";
 import axios from "axios";
+import {
+  REACT_APP_API_GETDATA,
+  REACT_APP_API_PUTDATA,
+  REACT_APP_API_SNS,
+  REACT_APP_API_TEXT,
+} from "../util/URLs";
 
 function NotesEditing({ note, isOpen, onClose, onEdit }) {
   const [noteText, setNoteText] = useState(note ? note.text : "");
-  const [email, setEmail] = useState("singh.captain107@gmail.com");
+  const [email, setEmail] = useState("");
 
   const handleSave = async () => {
     // Update note text
     onEdit(note, noteText);
 
     // Fetch ARN
-    const response = await axios.get(
-      "https://aep40x3ihl.execute-api.us-east-1.amazonaws.com/prod/"
-    );
+    const response = await axios.get(REACT_APP_API_GETDATA);
 
     if (response.status === 200) {
       const allNotes = response.data;
@@ -37,27 +41,21 @@ function NotesEditing({ note, isOpen, onClose, onEdit }) {
           id: note.id,
           isEditing: false,
         };
-        const updateResponse = await axios.post(
-          "https://qqaeoe85z8.execute-api.us-east-1.amazonaws.com/prod/",
-          newNote
-        );
+        const updateResponse = await axios.post(REACT_APP_API_PUTDATA, newNote);
 
         if (updateResponse.status === 200) {
           console.log("Note successfully updated");
         }
 
         // Subscribe note
-        const subscribeResponse = await axios.post(
-          "https://szs5bn2441.execute-api.us-east-1.amazonaws.com/prod/",
-          {
-            topicArn: noteWithArn.topicArn,
-            message:
-              "This is an update onto your subscribed notes : \n" + noteText,
-            subject: "Update on your subscribed notes : " + note.title,
-            isSubscribe: false,
-            email: email,
-          }
-        );
+        const subscribeResponse = await axios.post(REACT_APP_API_SNS, {
+          topicArn: noteWithArn.topicArn,
+          message:
+            "This is an update onto your subscribed notes : \n" + noteText,
+          subject: "Update on your subscribed notes : " + note.title,
+          isSubscribe: false,
+          email: email,
+        });
 
         if (subscribeResponse.status === 200) {
           console.log("Note subscription successful");
@@ -69,49 +67,6 @@ function NotesEditing({ note, isOpen, onClose, onEdit }) {
 
     // Close modal
     onClose();
-  };
-
-  // ...
-
-  const subscribeNote = async (title, text, arn, isSubscribe) => {
-    try {
-      const response = await axios.post(
-        "https://szs5bn2441.execute-api.us-east-1.amazonaws.com/prod/",
-        {
-          topicArn: arn,
-          message: text,
-          subject: title,
-          isSubscribe: isSubscribe,
-          email: email,
-        }
-      );
-      if (response.status === 200) {
-        console.log("Note subscription successful");
-      }
-    } catch (error) {
-      console.log("Failed to subscribe:", error);
-    }
-  };
-
-  // Function to update the note in the backend
-  const updateNote = async (id, text, title) => {
-    try {
-      const newNote = {
-        title: title,
-        text: text,
-        id: id,
-        isEditing: false,
-      };
-      const response = await axios.post(
-        "https://qqaeoe85z8.execute-api.us-east-1.amazonaws.com/prod/",
-        newNote
-      );
-      if (response.status === 200) {
-        console.log("Note successfully updated");
-      }
-    } catch (error) {
-      console.log("Failed to update note:", error);
-    }
   };
 
   useEffect(() => {
