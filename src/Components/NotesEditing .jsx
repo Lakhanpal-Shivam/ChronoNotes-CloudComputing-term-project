@@ -1,130 +1,144 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
-  Box,
-  Button,
-  Text,
-  Textarea,
-  IconButton,
   Modal,
   ModalOverlay,
   ModalContent,
   ModalHeader,
+  ModalCloseButton,
   ModalBody,
   ModalFooter,
-  useDisclosure,
+  Textarea,
+  Button,
 } from "@chakra-ui/react";
-import { DeleteIcon } from "@chakra-ui/icons";
+import axios from "axios";
 
-function NotesEditing({ notes, updateNote, deleteNote }) {
-  const [editIndex, setEditIndex] = useState(-1);
-  const [editedText, setEditedText] = useState("");
-  const { isOpen, onOpen, onClose } = useDisclosure();
-  const [selectedNote, setSelectedNote] = useState(null);
+function NotesEditing({ note, isOpen, onClose, onEdit }) {
+  const [noteText, setNoteText] = useState(note ? note.text : "");
+  const [email, setEmail] = useState("singh.captain107@gmail.com");
 
-  const startEditing = (index, text) => {
-    setEditIndex(index);
-    setEditedText(text);
-  };
+  const handleSave = async () => {
+    // Update note text
+    onEdit(note, noteText);
 
-  const saveNoteChanges = (index) => {
-    updateNote(index, editedText);
-    setEditIndex(-1);
-    setEditedText("");
-  };
+    // Fetch ARN
+    const response = await axios.get(
+      "https://aep40x3ihl.execute-api.us-east-1.amazonaws.com/prod/"
+    );
 
-  const handleNoteClick = (note) => {
-    setSelectedNote(note);
-    onOpen();
-  };
+    if (response.status === 200) {
+      const allNotes = response.data;
+      const noteWithArn = allNotes.find((n) => n.id === note.id);
 
-  const handleNoteDelete = (note) => {
-    deleteNote(note);
+      if (noteWithArn) {
+        // Update note on backend
+        const newNote = {
+          title: note.title,
+          text: noteText,
+          id: note.id,
+          isEditing: false,
+        };
+        const updateResponse = await axios.post(
+          "https://qqaeoe85z8.execute-api.us-east-1.amazonaws.com/prod/",
+          newNote
+        );
+
+        if (updateResponse.status === 200) {
+          console.log("Note successfully updated");
+        }
+
+        // Subscribe note
+        const subscribeResponse = await axios.post(
+          "https://szs5bn2441.execute-api.us-east-1.amazonaws.com/prod/",
+          {
+            topicArn: noteWithArn.topicArn,
+            message:
+              "This is an update onto your subscribed notes : \n" + noteText,
+            subject: "Update on your subscribed notes : " + note.title,
+            isSubscribe: false,
+            email: email,
+          }
+        );
+
+        if (subscribeResponse.status === 200) {
+          console.log("Note subscription successful");
+        }
+      } else {
+        console.log("Note not found:", note.id);
+      }
+    }
+
+    // Close modal
     onClose();
   };
 
+  // ...
+
+  const subscribeNote = async (title, text, arn, isSubscribe) => {
+    try {
+      const response = await axios.post(
+        "https://szs5bn2441.execute-api.us-east-1.amazonaws.com/prod/",
+        {
+          topicArn: arn,
+          message: text,
+          subject: title,
+          isSubscribe: isSubscribe,
+          email: email,
+        }
+      );
+      if (response.status === 200) {
+        console.log("Note subscription successful");
+      }
+    } catch (error) {
+      console.log("Failed to subscribe:", error);
+    }
+  };
+
+  // Function to update the note in the backend
+  const updateNote = async (id, text, title) => {
+    try {
+      const newNote = {
+        title: title,
+        text: text,
+        id: id,
+        isEditing: false,
+      };
+      const response = await axios.post(
+        "https://qqaeoe85z8.execute-api.us-east-1.amazonaws.com/prod/",
+        newNote
+      );
+      if (response.status === 200) {
+        console.log("Note successfully updated");
+      }
+    } catch (error) {
+      console.log("Failed to update note:", error);
+    }
+  };
+
+  useEffect(() => {
+    setNoteText(note ? note.text : "");
+  }, [note]);
+
   return (
-    <>
-      {notes.map((note, index) => (
-        <React.Fragment key={index}>
-          {selectedNote === note ? (
-            <Box borderWidth="1px" borderRadius="md" p={4} position="relative">
-              <Text fontSize="lg" fontWeight="bold" mb={2}>
-                {note.timestamp}
-              </Text>
-              <Text>{note.text}</Text>
-              {editIndex === index ? (
-                <>
-                  <Textarea
-                    value={editedText}
-                    onChange={(e) => setEditedText(e.target.value)}
-                  />
-                  <Button
-                    colorScheme="teal"
-                    size="sm"
-                    onClick={() => saveNoteChanges(index)}
-                  >
-                    Save Changes
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Button
-                    colorScheme="blue"
-                    size="xs"
-                    position="absolute"
-                    top={2}
-                    right={30}
-                    onClick={() => startEditing(index, note.text)}
-                  >
-                    Edit
-                  </Button>
-                  <IconButton
-                    icon={<DeleteIcon />}
-                    colorScheme="red"
-                    size="xs"
-                    position="absolute"
-                    top={2}
-                    right={2}
-                    onClick={() => handleNoteDelete(note)}
-                    aria-label="Delete Note"
-                  />
-                </>
-              )}
-            </Box>
-          ) : (
-            <Box
-              borderWidth="1px"
-              borderRadius="md"
-              p={4}
-              position="relative"
-              onClick={() => handleNoteClick(note)}
-              cursor="pointer"
-            >
-              <Text fontSize="lg" fontWeight="bold" mb={2}>
-                {note.timestamp}
-              </Text>
-              <Text>{note.text}</Text>
-            </Box>
-          )}
-        </React.Fragment>
-      ))}
-      {isOpen && (
-        <Modal isOpen={isOpen} onClose={onClose}>
-          <ModalOverlay />
-          <ModalContent>
-            <ModalHeader>{selectedNote.timestamp}</ModalHeader>
-            <ModalBody>
-              <Text>{selectedNote.text}</Text>
-            </ModalBody>
-            <ModalFooter>
-              <Button colorScheme="teal" onClick={onClose}>
-                Close
-              </Button>
-            </ModalFooter>
-          </ModalContent>
-        </Modal>
-      )}
-    </>
+    <Modal isOpen={isOpen} onClose={onClose}>
+      <ModalOverlay />
+      <ModalContent>
+        <ModalHeader>Edit Note</ModalHeader>
+        <ModalCloseButton />
+        <ModalBody>
+          <Textarea
+            placeholder="Edit your note"
+            value={noteText}
+            onChange={(e) => setNoteText(e.target.value)}
+          />
+        </ModalBody>
+        <ModalFooter>
+          <Button colorScheme="blue" mr={3} onClick={handleSave}>
+            Save
+          </Button>
+          <Button onClick={onClose}>Cancel</Button>
+        </ModalFooter>
+      </ModalContent>
+    </Modal>
   );
 }
 
