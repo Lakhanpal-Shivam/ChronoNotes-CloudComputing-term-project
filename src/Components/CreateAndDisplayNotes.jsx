@@ -16,7 +16,6 @@ import {
   SimpleGrid,
   Heading,
   IconButton,
-  Badge,
 } from "@chakra-ui/react";
 import { DeleteIcon, EditIcon } from "@chakra-ui/icons";
 import NotesEditing from "../Components/NotesEditing ";
@@ -24,10 +23,10 @@ import axios from "axios";
 import { InfoOutlineIcon } from "@chakra-ui/icons";
 import { Tooltip } from "@chakra-ui/react";
 import {
-  REACT_APP_API_GETDATA,
-  REACT_APP_API_PUTDATA,
-  REACT_APP_API_SNS,
-  REACT_APP_API_TEXT,
+  API_GET_NOTES_URL,
+  API_PUT_NOTES_URL,
+  API_SNS_URL,
+  API_TEXTTRACT_URL,
 } from "../util/URLs";
 
 function CreateAndDisplayNotes() {
@@ -71,11 +70,9 @@ function CreateAndDisplayNotes() {
   } = useDisclosure();
 
   const handleSubscription = async () => {
-    // First, fetch all the notes
     try {
-      const response = await axios.get(REACT_APP_API_GETDATA);
+      const response = await axios.get(API_GET_NOTES_URL);
       if (response.status === 200) {
-        // If the request is successful, find the note by id
         const allNotes = response.data;
         const noteWithArn = allNotes.find(
           (note) => note.id === selectedNote.id
@@ -84,7 +81,7 @@ function CreateAndDisplayNotes() {
         if (noteWithArn) {
           console.log(noteWithArn.topicArn);
           try {
-            const subscribeResponse = await axios.post(REACT_APP_API_SNS, {
+            const subscribeResponse = await axios.post(API_SNS_URL, {
               topicArn: noteWithArn.topicArn,
               message: selectedNote.text,
               subject: selectedNote.title,
@@ -92,7 +89,6 @@ function CreateAndDisplayNotes() {
               email: email,
             });
             if (subscribeResponse.status === 200) {
-              // If the subscription is successful, add the note to the list of subscribed notes
               setSubscribedNotes([...subscribedNotes, selectedNote]);
               setEmail("");
               onSubscribeModalClose();
@@ -109,18 +105,6 @@ function CreateAndDisplayNotes() {
     }
   };
 
-  function getBase64(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.readAsDataURL(file);
-      reader.onload = () => {
-        const base64Data = reader.result.split(",")[1];
-        resolve(base64Data);
-      };
-      reader.onerror = (error) => reject(error);
-    });
-  }
-
   const {
     isOpen: isViewNoteOpen,
     onOpen: onViewNoteOpen,
@@ -136,7 +120,7 @@ function CreateAndDisplayNotes() {
         isEditing: false,
       };
       try {
-        const response = await axios.post(REACT_APP_API_PUTDATA, newNote);
+        const response = await axios.post(API_PUT_NOTES_URL, newNote);
         if (response.status === 200) {
           setNoteText("");
           setNoteHeading("");
@@ -158,7 +142,7 @@ function CreateAndDisplayNotes() {
         const base64String = reader.result
           .replace("data:", "")
           .replace(/^.+,/, "");
-        const response = await axios.post(REACT_APP_API_TEXT, {
+        const response = await axios.post(API_TEXTTRACT_URL, {
           image: base64String,
         });
         if (response.data) {
@@ -171,7 +155,7 @@ function CreateAndDisplayNotes() {
           };
           try {
             const addNoteResponse = await axios.post(
-              REACT_APP_API_PUTDATA,
+              API_PUT_NOTES_URL,
               newNote
             );
             if (addNoteResponse.status === 200) {
@@ -192,20 +176,14 @@ function CreateAndDisplayNotes() {
 
   const fetchNotes = async () => {
     try {
-      const response = await axios.get(REACT_APP_API_GETDATA);
+      const response = await axios.get(API_GET_NOTES_URL);
       if (response.status === 200) {
-        //console.log(response.data);
         setNotes(response.data);
       }
     } catch (error) {
       console.log("Failed to fetch notes:", error);
     }
   };
-
-  // Call fetchNotes in a useEffect hook when the component mounts
-  React.useEffect(() => {
-    fetchNotes();
-  }, []);
 
   React.useEffect(() => {
     fetchNotes();
@@ -222,10 +200,6 @@ function CreateAndDisplayNotes() {
     onViewNoteClose();
   };
 
-  const uploadImage = async (event) => {
-    // const file = event.target.files[0];
-    // const base64 = await getBase64(file);
-  };
   return (
     <Box py={8} mx="auto" maxWidth="90%">
       <Text fontSize="3xl" fontWeight="bold" mb={4}>
@@ -238,7 +212,6 @@ function CreateAndDisplayNotes() {
         Upload Handwritten Note
       </Button>
 
-      {/* Modal for adding a note */}
       <Modal isOpen={isAddNoteOpen} onClose={onAddNoteClose}>
         <ModalOverlay />
         <ModalContent>
@@ -266,7 +239,6 @@ function CreateAndDisplayNotes() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-      {/* Modal for uploading a handwritten note */}
       <Modal isOpen={isUploadNoteOpen} onClose={onUploadNoteClose}>
         <ModalOverlay />
         <ModalContent>
@@ -280,11 +252,6 @@ function CreateAndDisplayNotes() {
             />
           </ModalBody>
           <ModalFooter>
-            {/* <Button colorScheme="blue" mr={3} onClick={addNote}>
-              Upload
-            </Button>
-             */}
-
             <Button colorScheme="blue" mr={3} onClick={uploadNote}>
               Upload
             </Button>
@@ -301,7 +268,7 @@ function CreateAndDisplayNotes() {
             borderWidth={1}
             onClick={() => viewNote(note)}
             cursor="pointer"
-            position="relative" //add this line
+            position="relative"
           >
             <Button
               size="xs"
@@ -330,7 +297,7 @@ function CreateAndDisplayNotes() {
                 top={2}
                 right={2}
                 onClick={(e) => {
-                  e.stopPropagation(); // prevents the note from being selected when the info icon is clicked
+                  e.stopPropagation();
                 }}
               />
             </Tooltip>

@@ -12,10 +12,9 @@ import {
 } from "@chakra-ui/react";
 import axios from "axios";
 import {
-  REACT_APP_API_GETDATA,
-  REACT_APP_API_PUTDATA,
-  REACT_APP_API_SNS,
-  REACT_APP_API_TEXT,
+  API_GET_NOTES_URL,
+  API_PUT_NOTES_URL,
+  API_SNS_URL,
 } from "../util/URLs";
 
 function NotesEditing({ note, isOpen, onClose, onEdit }) {
@@ -23,11 +22,10 @@ function NotesEditing({ note, isOpen, onClose, onEdit }) {
   const [email, setEmail] = useState("");
 
   const handleSave = async () => {
-    // Update note text
     onEdit(note, noteText);
 
     // Fetch ARN
-    const response = await axios.get(REACT_APP_API_GETDATA);
+    const response = await axios.get(API_GET_NOTES_URL);
 
     if (response.status === 200) {
       const allNotes = response.data;
@@ -41,14 +39,13 @@ function NotesEditing({ note, isOpen, onClose, onEdit }) {
           id: note.id,
           isEditing: false,
         };
-        const updateResponse = await axios.post(REACT_APP_API_PUTDATA, newNote);
+        const updateResponse = await axios.post(API_PUT_NOTES_URL, newNote);
 
         if (updateResponse.status === 200) {
           console.log("Note successfully updated");
         }
 
-        // Subscribe note
-        const subscribeResponse = await axios.post(REACT_APP_API_SNS, {
+        const subscribeResponse = await axios.post(API_SNS_URL, {
           topicArn: noteWithArn.topicArn,
           message:
             "This is an update onto your subscribed notes : \n" + noteText,
@@ -65,7 +62,6 @@ function NotesEditing({ note, isOpen, onClose, onEdit }) {
       }
     }
 
-    // Close modal
     onClose();
   };
 
