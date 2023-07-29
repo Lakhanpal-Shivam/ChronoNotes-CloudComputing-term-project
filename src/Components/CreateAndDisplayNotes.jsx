@@ -171,7 +171,7 @@ function CreateAndDisplayNotes() {
           };
           try {
             const addNoteResponse = await axios.post(
-              "https://qqaeoe85z8.execute-api.us-east-1.amazonaws.com/prod/",
+              REACT_APP_API_PUTDATA,
               newNote
             );
             if (addNoteResponse.status === 200) {
