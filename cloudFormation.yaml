@@ -1,0 +1,531 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: This template is to create all resources for Config Service Api
+Parameters:
+  LambdaArtifactBucketName:
+    Type: String
+    Default: befit-artifact
+  S3BucketName:
+    Type: String
+    Default: befit-test-s3
+
+Resources:
+  EC2Instance:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      ImageId: ami-06ca3ca175f37dd66
+      InstanceType: t2.micro
+      KeyName: shivam2
+      UserData:
+        "Fn::Base64": !Sub |
+          #!/bin/bash -xe
+
+          source /etc/environment
+          yum update -y
+          yum install -y git
+          sudo yum install -y nodejs
+
+          git clone https://github.com/Lakhanpal-Shivam/csci5409-term-assignment-project /home/ec2-user/my-app
+
+          # Navigate to the application directory
+          cd /home/ec2-user/my-app
+
+          echo "export const API_GET_NOTES_URL='https://${GetNotesAPIGateway}.execute-api.${AWS::Region}.amazonaws.com/prod';" >> /home/ec2-user/my-app/src/util/URLs.js
+          echo "export const API_PUT_NOTES_URL='https://${PutNotesAPIGateway}.execute-api.${AWS::Region}.amazonaws.com/prod';" >> /home/ec2-user/my-app/src/util/URLs.js
+          echo "export const API_SNS_URL='https://${SnsAPIGateway}.execute-api.${AWS::Region}.amazonaws.com/prod';" >> /home/ec2-user/my-app/src/util/URLs.js
+          echo "export const API_TEXTTRACT_URL='https://${TextAPIGateway}.execute-api.${AWS::Region}.amazonaws.com/prod';" >> /home/ec2-user/my-app/src/util/URLs.js
+
+          # Install dependencies
+          sudo npm install
+
+          # # Start the application
+          sudo npm start
+
+  # Database
+  NotesData:
+    Type: "AWS::DynamoDB::Table"
+    Properties:
+      TableName: "NotesData"
+      AttributeDefinitions:
+        - AttributeName: "id"
+          AttributeType: "N"
+      KeySchema:
+        - AttributeName: "id"
+          KeyType: "HASH"
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+  # Function to Get data
+  GetNotesFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: GetNotesFunction
+      Runtime: nodejs14.x
+      Handler: index.handler
+      Role: arn:aws:iam::104004336624:role/LabRole
+      Code:
+        ZipFile: |
+          // Import AWS SDK
+          const AWS = require('aws-sdk');
+
+          // Create an instance of DynamoDB Document Client
+          const documentClient = new AWS.DynamoDB.DocumentClient();
+
+          // Define the AWS Lambda handler function
+          exports.handler = async (event) => {
+            // Define the parameters for the DynamoDB scan operation
+            const dynamoParams = {
+              TableName: 'NotesData'  // specify the name of your table
+            };
+
+            try {
+              // Perform a scan operation on the DynamoDB table
+              const dynamoScanResult = await documentClient.scan(dynamoParams).promise();
+
+              // If the scan operation is successful, return a successful HTTP response
+              return {
+                statusCode: 200,
+                headers: {
+                  'Access-Control-Allow-Origin': '*', // allow requests from any origin
+                  'Access-Control-Allow-Headers': 'Content-Type', // allow only 'Content-Type' in headers
+                  'Access-Control-Allow-Methods': 'GET', // allow only GET method
+                  'Access-Control-Allow-Credentials': true // allow cookies to be included in the requests
+                },
+                body: JSON.stringify(dynamoScanResult.Items) // convert the DynamoDB result into a JSON string
+              };
+            } catch (error) {
+              // If the scan operation fails, return an error HTTP response
+              // and provide additional context about the error
+              return {
+                statusCode: 500,
+                headers: {
+                  'Access-Control-Allow-Origin': '*',
+                  'Access-Control-Allow-Headers': 'Content-Type',
+                  'Access-Control-Allow-Methods': 'GET',
+                  'Access-Control-Allow-Credentials': true
+                },
+                body: `Error retrieving data from DynamoDB. Error details: ${error.message}`
+              };
+            }
+          };
+
+      Timeout: 30
+
+  GetNotesFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref GetNotesFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${GetNotesAPIGateway}/*/*"
+
+  GetNotesAPIGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: GetNotesAPIGateway
+
+  GetNotesEndpoint:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref GetNotesAPIGateway
+      ResourceId: !GetAtt GetNotesAPIGateway.RootResourceId
+      HttpMethod: GET
+      AuthorizationType: NONE
+      OperationName: "lambda"
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${GetNotesFunction.Arn}/invocations
+
+  GetNotesEndpointDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: GetNotesEndpoint
+    Properties:
+      RestApiId: !Ref GetNotesAPIGateway
+      StageName: prod
+
+  # Function  to post data
+  PutNotesFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: SaveNotesFunction
+      Runtime: nodejs14.x
+      Handler: index.handler
+      Role: arn:aws:iam::104004336624:role/LabRole
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const docClient = new AWS.DynamoDB.DocumentClient();
+
+          // Lambda function handler
+          exports.handler = async (event) => {
+            // Parse the event body
+            const noteData = JSON.parse(event.body);
+            const { title, text, id, isEditing, topicArn } = noteData;
+
+            const sns = new AWS.SNS();
+            const topicParams = {
+              Name: id.toString(),
+            };
+
+            let snsTopicData = {};
+
+            // If the note is not in editing mode, create a new SNS Topic
+            if (!isEditing) {
+              snsTopicData = await sns.createTopic(topicParams).promise();
+            } else {
+              // If in editing mode, do not create new SNS Topic, reuse existing one
+              snsTopicData["TopicArn"] = topicArn;
+            }
+
+            // Prepare the parameters for DynamoDB operation
+            const dynamoDBParams = isEditing
+              ? getUpdateParams(id, title, text) // If editing existing note
+              : getCreateParams(id, title, text, snsTopicData.TopicArn); // If creating new note
+
+            try {
+              // Execute the DynamoDB operation
+              await docClient.put(dynamoDBParams).promise(); 
+              return generateResponse(200, 'Successfully updated item!');
+            } catch (err) {
+              return generateResponse(500, err);
+            }
+          };
+
+          // Function to get the parameters for creating a new note
+          function getCreateParams(id, title, text, topicArn) {
+            return {
+              TableName: 'NotesData',
+              Item: {
+                id: parseInt(id),
+                title: title,
+                text: text,
+                topicArn: topicArn,
+              },
+            };
+          }
+
+          // Function to get the parameters for updating an existing note
+          function getUpdateParams(id, title, text) {
+            return {
+              TableName: 'NotesData',
+              Key: { id: parseInt(id) },
+              UpdateExpression: "set #t = :title, #txt = :text",
+              ExpressionAttributeNames: { "#t": "title", "#txt": "text" },
+              ExpressionAttributeValues: { ":title": title, ":text": text },
+              ReturnValues: "UPDATED_NEW",
+            };
+          }
+
+          // Function to generate the lambda function response
+          function generateResponse(statusCode, message) {
+            return {
+              statusCode: statusCode,
+              headers: {
+                'Access-Control-Allow-Origin' : '*',
+                'Access-Control-Allow-Headers':'Content-Type',
+                'Access-Control-Allow-Methods': 'POST',
+                'Access-Control-Allow-Credentials' : true
+              },
+              body: statusCode === 200 ? message : { error: message }
+            };
+          }
+
+      Timeout: 30
+      Environment:
+        Variables:
+          SNS_ARN: !Ref SNSNotificationTopic
+
+  PutNotesFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref PutNotesFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${PutNotesAPIGateway}/*/*"
+
+  PutNotesAPIGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: PutNotesAPIGateway
+
+  PutNotesGatewayResponses4xx:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+        gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+      ResponseType: DEFAULT_4XX
+      RestApiId: !Ref PutNotesAPIGateway
+      StatusCode: "200"
+
+  PutNotesEndpoint:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref PutNotesAPIGateway
+      ResourceId: !GetAtt PutNotesAPIGateway.RootResourceId
+      HttpMethod: POST
+      AuthorizationType: NONE
+      OperationName: "lambda"
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PutNotesFunction.Arn}/invocations
+
+  PutNotesEndpointDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: PutNotesEndpoint
+    Properties:
+      RestApiId: !Ref PutNotesAPIGateway
+      StageName: prod
+
+  # SNS
+
+  SNSNotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: MyNotificationTopic
+
+  MySNSNotesFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: MySNSNotesFunction
+      Runtime: nodejs14.x
+      Handler: index.handler
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk'); // AWS SDK for interacting with AWS services
+          const os = require('os');
+
+          // Handler function for AWS Lambda
+          exports.handler = async (event, context) => {
+            console.log("Lambda function has started...");
+
+            const snsService = new AWS.SNS(); // Instantiate the SNS service from AWS SDK
+            const requestData = JSON.parse(event.body); // Parse the incoming data from request body
+
+            // Extracting relevant details from the request data
+            const topicARN = requestData.topicArn;
+            const mailMessage = requestData.message;
+            const mailSubject = requestData.subject;
+            const isSubscriptionRequest = requestData.isSubscribe;
+            const userEmail = requestData.email;
+
+            // Check if the incoming request is a subscription request
+            if(isSubscriptionRequest)
+            {
+              try {
+                await snsService.subscribe({
+                  TopicArn:  topicARN,
+                  Protocol: 'email',
+                  Endpoint: userEmail,
+                }).promise();
+
+                console.log(`Email ${userEmail} has been subscribed to Topic ARN: ${topicARN}`);
+              } catch (error) {
+                console.error("Error while subscribing:", error);
+              }
+            }
+            else
+            {
+              // Prepare parameters for SNS publish
+              const snsPublishParams = {
+                Message: mailMessage, 
+                Subject: mailSubject,
+                TopicArn: topicARN
+              };
+
+              console.log("SNS Publish Parameters: ", snsPublishParams);  
+
+              // Attempt to publish the message to the SNS topic  
+              try {
+                var publishResult = await snsService.publish(snsPublishParams).promise();
+                console.log("Publish Result: ", publishResult);
+              } catch (error) {
+                console.error("Error while publishing message:", error);
+              }
+            }
+            
+            console.log("Preparing Response");
+
+            // Prepare the response object
+            const response = {
+              statusCode: 200,
+              headers: {
+                "Access-Control-Allow-Headers" : "Content-Type",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "POST",
+                "Access-Control-Allow-Credentials" : true
+              },
+              body: 'Mail operation has been processed',
+            };
+
+            console.log("Returning response: ", response);
+            return response;
+          };
+
+      Role: arn:aws:iam::104004336624:role/LabRole
+      Environment:
+        Variables:
+          SNS_ARN: !Ref SNSNotificationTopic
+
+  MySNSNotesFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref MySNSNotesFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${SnsAPIGateway}/*/*"
+
+  SnsAPIGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: SnsAPIGateway
+
+  SnsGatewayResponses4xx:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+        gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+      ResponseType: DEFAULT_4XX
+      RestApiId: !Ref SnsAPIGateway
+      StatusCode: "200"
+
+  SnsEndpoint:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref SnsAPIGateway
+      ResourceId: !GetAtt SnsAPIGateway.RootResourceId
+      HttpMethod: POST
+      AuthorizationType: NONE
+      OperationName: "lambda"
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${MySNSNotesFunction.Arn}/invocations
+
+  SnsEndpointDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: SnsEndpoint
+    Properties:
+      RestApiId: !Ref SnsAPIGateway
+      StageName: prod
+
+  # Texttract fucntion
+  NotesTextractFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: NotesTextractFunction
+      Runtime: nodejs14.x
+      Handler: index.handler
+      Role: arn:aws:iam::104004336624:role/LabRole
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          // Initialize the Textract service object
+          const textractService = new AWS.Textract();
+
+          exports.handler = async (event) => {
+            try {
+              // Parse the body from the event
+              const requestBody = JSON.parse(event.body);
+              console.log("Received Request Body:", requestBody);
+
+              // Extract the image URL from the request body
+              const encodedImageUrl = requestBody.image;
+              console.log("Encoded Image URL:", encodedImageUrl);
+
+              // Decode the base64-encoded URL into a Buffer object
+              const decodedImageBuffer = Buffer.from(encodedImageUrl, 'base64');
+              console.log("Decoded Image Buffer:", decodedImageBuffer);
+
+              // Setup Textract parameters with decoded image bytes
+              const textractParams = {
+                Document: {
+                  Bytes: decodedImageBuffer,
+                },
+              };
+
+              // Call AWS Textract service to detect text from image
+              const textractResponse = await textractService.detectDocumentText(textractParams).promise();
+
+              // Initialize an empty string to hold the extracted text
+              let extractedText = '';
+              
+              // Iterate over each block in the Textract response
+              for (const blockItem of textractResponse.Blocks) {
+                // If the block type is 'WORD', concatenate it to the extracted text
+                if (blockItem.BlockType === 'WORD') {
+                  extractedText += blockItem.Text + ' ';
+                }
+              }
+
+              console.log("Extracted Text:", extractedText);
+              // Return the extracted text along with successful response status and headers
+              return {
+                statusCode: 200,
+                headers: {
+                  'Access-Control-Allow-Origin' : '*',
+                  'Access-Control-Allow-Headers':'Content-Type',
+                  'Access-Control-Allow-Methods': 'POST',
+                  'Access-Control-Allow-Credentials' : true
+                },
+                body: extractedText.trim(),
+              };
+
+            } catch (error) {
+              console.error('Error during Textract execution:', error);
+              // Return a meaningful error message along with failure status
+              return {
+                statusCode: 500,
+                body: 'Failed to process the image due to an internal server error. Please try again later.',
+              };
+            }
+          };
+
+  NotesTextractFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref NotesTextractFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${TextAPIGateway}/*/*"
+
+  TextAPIGateway:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: TextAPIGateway
+
+  TextGatewayResponses4xx:
+    Type: AWS::ApiGateway::GatewayResponse
+    Properties:
+      ResponseParameters:
+        gatewayresponse.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+        gatewayresponse.header.Access-Control-Allow-Methods: "'GET,OPTIONS'"
+        gatewayresponse.header.Access-Control-Allow-Origin: "'*'"
+      ResponseType: DEFAULT_4XX
+      RestApiId: !Ref TextAPIGateway
+      StatusCode: "200"
+
+  TextEndpoint:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref TextAPIGateway
+      ResourceId: !GetAtt TextAPIGateway.RootResourceId
+      HttpMethod: POST
+      AuthorizationType: NONE
+      OperationName: "lambda"
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${NotesTextractFunction.Arn}/invocations
+
+  TextEndpointDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: TextEndpoint
+    Properties:
+      RestApiId: !Ref TextAPIGateway
+      StageName: prod
